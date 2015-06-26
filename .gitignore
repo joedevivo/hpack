@@ -1,0 +1,6 @@
+.DS_Store
+.edts
+rebar3
+_build
+erln8.config
+*.beam
