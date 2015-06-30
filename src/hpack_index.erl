@@ -129,7 +129,7 @@ lookup(Idx, #dynamic_table{table=T}) ->
 
 -spec resize(pos_integer(), dynamic_table()) -> dynamic_table().
 resize(NewSize, DT=#dynamic_table{size=S})
-    when NewSize =< S ->
+    when NewSize >= S ->
         DT#dynamic_table{max_size=NewSize};
 resize(NewSize, DT) ->
     resize(NewSize, droplast(DT)).
