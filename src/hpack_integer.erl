@@ -83,24 +83,22 @@ encode( 31,5) -> << 31:5,0:8>>;
 encode( 63,6) -> << 63:6,0:8>>;
 encode(127,7) -> <<127:7,0:8>>;
 encode(255,8) -> <<255,0>>;
-encode(Int, Prefix) when Int < (1 bsl Prefix - 1) ->
-    <<Int:Prefix>>;
-encode(Int, Prefix) ->
-    PrefixMask = 1 bsl Prefix - 1,
-    Remaining = Int - PrefixMask,
+encode(Int, N) when Int < (1 bsl N - 1) ->
+    <<Int:N>>;
+encode(Int, N) ->
+    Prefix = 1 bsl N - 1,
+    Remaining = Int - Prefix,
     Bin = encode_(Remaining, <<>>),
-    <<PrefixMask:Prefix, Bin/binary>>.
+    <<Prefix:N, Bin/binary>>.
 
 -spec encode_(non_neg_integer(), binary()) -> binary().
-encode_(0, BinAcc) ->
-    BinAcc;
 encode_(I, BinAcc) ->
-    Rem = I bsr 7,
-    This = (I rem 128),
-    ThisByte = case Rem =:= 0 of
-        true ->
-            This;
-        _ ->
-            128 + This
-    end,
-    encode_(Rem, <<BinAcc/binary, ThisByte>>).
+    LeastSigSeven = (I rem 128),
+    RestToEncode = I bsr 7,
+    case RestToEncode of
+        0 ->
+            <<BinAcc/binary, LeastSigSeven>>;
+        _ -> %% Adds the continuation bit
+            ThisByte = 128 + LeastSigSeven,
+            encode_(RestToEncode, <<BinAcc/binary, ThisByte>>)
+    end.
