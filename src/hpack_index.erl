@@ -23,6 +23,7 @@
     size = 0 :: non_neg_integer()
     }).
 -type dynamic_table() :: #dynamic_table{}.
+-export_type([dynamic_table/0]).
 
 -spec new() -> dynamic_table().
 new() -> #dynamic_table{}.

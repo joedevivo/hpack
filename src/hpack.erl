@@ -8,7 +8,8 @@
          new_decode_context/0,
          new_encode_context/0,
          decode/2,
-         encode/2
+         encode/2,
+         encode/3
         ]).
 
 %% Datatypes for the real world:
@@ -21,6 +22,7 @@
         dynamic_table = hpack_index:new()
     }).
 -type encode_context() :: #encode_context{}.
+-type encode_matcher() :: fun((header(), hpack_index:dynamic_table()) -> {atom(), pos_integer()|undefined}).
 
 -export_type([decode_context/0,encode_context/0]).
 
@@ -44,7 +46,11 @@ new_decode_context() -> #decode_context{}.
 
 -spec encode([{binary(), binary()}], encode_context()) -> {binary(), encode_context()}.
 encode(Headers, Context) ->
-    encode(Headers, <<>>, Context).
+    encode(Headers, <<>>, Context, fun hpack_index:match/2).
+
+-spec encode([{binary(), binary()}], encode_context(), encode_matcher()) -> {binary(), encode_context()}.
+encode(Headers, Context, Matcher) ->
+    encode(Headers, <<>>, Context, Matcher).
 
 -spec decode(binary(), decode_context()) -> {headers(), decode_context()}.
 decode(Bin, Context) ->
@@ -162,11 +168,12 @@ decode_dynamic_table_size_update(<<2#001:3,NewSize:5,Bin/binary>>, Acc,
     Context = #decode_context{dynamic_table=T}) ->
     decode(Bin, Acc, Context#decode_context{dynamic_table=hpack_index:resize(NewSize, T)}).
 
--spec encode([{binary(), binary()}], binary(), encode_context()) -> {binary(), encode_context()}.
-encode([], Acc, Context) ->
+-spec encode([{binary(), binary()}], binary(), encode_context(), encode_matcher()) -> {binary(), encode_context()}.
+encode([], Acc, Context, _) ->
     {Acc, Context};
-encode([{HeaderName, HeaderValue}|Tail], B, Context = #encode_context{dynamic_table=T}) ->
-    {BinToAdd, NewContext} = case hpack_index:match({HeaderName, HeaderValue}, T) of
+encode([{HeaderName, HeaderValue}|Tail], B, Context = #encode_context{dynamic_table=T},
+       Matcher) ->
+    {BinToAdd, NewContext} = case Matcher({HeaderName, HeaderValue}, T) of
         {indexed, I} ->
             {encode_indexed(I), Context};
         {literal_with_indexing, I} ->
@@ -177,7 +184,7 @@ encode([{HeaderName, HeaderValue}|Tail], B, Context = #encode_context{dynamic_ta
              Context#encode_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}}
     end,
     NewB = <<B/binary,BinToAdd/binary>>,
-    encode(Tail, NewB, NewContext).
+    encode(Tail, NewB, NewContext, Matcher).
 
 encode_indexed(I) when I < 63 ->
     <<2#1:1,I:7>>;
