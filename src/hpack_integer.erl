@@ -65,7 +65,7 @@ decode(Bin, Prefix) ->
 
 -spec decode(binary(), non_neg_integer(), non_neg_integer()) -> {non_neg_integer(), binary()}.
 decode(<<1:1,Int:7,Rem/binary>>, M, I) ->
-    decode(Rem, M+1, round(I + Int * math:pow(2, M)));
+    decode(Rem, M+7, round(I + Int * math:pow(2, M)));
 decode(<<0:1,Int:7,Rem/binary>>, M, I) ->
     {round(I + Int * math:pow(2, M)), Rem}.
 

@@ -44,3 +44,8 @@ encode_zero_test() ->
     ?assertEqual(<<0:7>>, hpack_integer:encode(0,7)),
     ?assertEqual(<<0>>,   hpack_integer:encode(0,8)),
     ok.
+
+mplus7_test() ->
+    ?assertEqual(<<127:7,140,1>>, hpack_integer:encode(267, 7)),
+    ?assertEqual({267, <<>>}, hpack_integer:decode(<<127:7,140,1>>, 7)),
+    ok.

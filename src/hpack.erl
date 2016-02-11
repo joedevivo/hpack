@@ -54,7 +54,8 @@ decode(Bin, Context) ->
 
 -spec decode(binary(), headers(), decode_context()) -> {headers(), decode_context()}.
 %% We're done decoding, return headers
-decode(<<>>, HeadersAcc, C) -> {HeadersAcc, C};
+decode(<<>>, HeadersAcc, C) ->
+    {HeadersAcc, C};
 %% First bit is '1', so it's an 'Indexed Header Feild'
 %% http://http2.github.io/http2-spec/compression.html#rfc.section.6.1
 decode(<<2#1:1,_/bits>>=B, HeaderAcc, Context) ->
