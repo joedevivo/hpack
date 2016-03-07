@@ -193,3 +193,57 @@ hpack_c_2_4_test() ->
 %%    ?assertEqual(<<2#11111111>>, hpack:encode_indexed(63)),
 %%
 %%    ok.
+
+% Regression tests
+decode_indexed_static_test() ->
+    Bin = <<2#10001000>>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<":status">>, <<"200">>}, H1),
+    ok.
+
+decode_literal_incremental_indexing_indexed_test() ->
+    Bin = <<2#01000100, 2#00000101, "/test">>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<":path">>, <<"/test">>}, H1),
+    ok.
+
+decode_literal_incremental_indexing_new_test() ->
+    Bin = <<2#01000000, 2#00001010, "custom-key", 2#00001100, "custom-value">>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<"custom-key">>, <<"custom-value">>}, H1),
+    ok.
+
+decode_literal_without_indexing_indexed_test() ->
+    Bin = <<2#00001111, 2#00101011, 2#00000111, "Firefox">>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<"user-agent">>, <<"Firefox">>}, H1),
+    ?assertEqual(DC2, hpack:new_decode_context()),
+    ok.
+
+decode_literal_without_indexing_new_test() ->
+    Bin = <<2#00000000, 2#00001010, "custom-key", 2#00001100, "custom-value">>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<"custom-key">>, <<"custom-value">>}, H1),
+    ?assertEqual(DC2, hpack:new_decode_context()),
+    ok.
+
+decode_literal_never_indexed_indexed_test() ->
+    Bin = <<2#00011111, 2#00101011, 2#00000111, "Firefox">>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<"user-agent">>, <<"Firefox">>}, H1),
+    ?assertEqual(DC2, hpack:new_decode_context()),
+    ok.
+
+decode_literal_never_indexed_new_test() ->
+    Bin = <<2#00010000, 2#00001010, "custom-key", 2#00001100, "custom-value">>,
+    {[H1], DC2} = hpack:decode(Bin, hpack:new_decode_context()),
+    io:format("DC2: ~p", [DC2]),
+    ?assertEqual({<<"custom-key">>, <<"custom-value">>}, H1),
+    ?assertEqual(DC2, hpack:new_decode_context()),
+    ok.

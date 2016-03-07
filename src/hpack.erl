@@ -87,15 +87,11 @@ decode(<<B:1,_/binary>>, _HeaderAcc, _Context) ->
     lager:debug("Bad header packet ~p", [B]),
     error.
 
-decode_indexed_header(<<2#1:1,2#1111111:7,B1/bits>>,
+decode_indexed_header(<<2#1:1,B1/bits>>,
                       Acc,
                       Context = #decode_context{dynamic_table=T}) ->
     {Index, B2} = hpack_integer:decode(B1, 7),
-    decode(B2, Acc ++ [hpack_index:lookup(Index, T)], Context);
-decode_indexed_header(<<2#1:1,Index:7,B1/bits>>,
-                      Acc,
-                      Context = #decode_context{dynamic_table=T}) ->
-    decode(B1, Acc ++ [hpack_index:lookup(Index, T)], Context).
+    decode(B2, Acc ++ [hpack_index:lookup(Index, T)], Context).
 
 %% The case where the field isn't indexed yet, but should be.
 decode_literal_header_with_indexing(<<2#01:2,2#000000:6,B1/bits>>, Acc,
@@ -121,47 +117,34 @@ decode_literal_header_with_indexing(<<2#01:2,B1/bits>>, Acc,
            Acc ++ [{Name, Str}],
            Context#decode_context{dynamic_table=hpack_index:add(Name, Str, T)}).
 
-decode_literal_header_without_indexing(<<2#0000:4,2#1111:4,B1/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
-    {Index, Rem} = hpack_integer:decode(B1,4),
-    {Str, B2} = hpack_string:decode(Rem),
-    {Name,_}= hpack_index:lookup(Index, T),
-    decode(B2, Acc ++ [{Name, Str}], Context);
 decode_literal_header_without_indexing(<<2#0000:4,2#0000:4,B1/bits>>, Acc,
     Context) ->
     {Str, B2} = hpack_string:decode(B1),
     {Value, B3} = hpack_string:decode(B2),
     decode(B3, Acc ++ [{Str, Value}], Context);
-decode_literal_header_without_indexing(<<2#0000:4,Index:4,B1/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
-    {Str, B2} = hpack_string:decode(B1),
-    {Name,_}= hpack_index:lookup(Index, T),
-    decode(B2, Acc ++ [{Name, Str}], Context).
-
-decode_literal_header_never_indexed(<<2#0001:4,2#1111:4,B1/bits>>, Acc,
+decode_literal_header_without_indexing(<<2#0000:4,B1/bits>>, Acc,
     Context = #decode_context{dynamic_table=T}) ->
     {Index, Rem} = hpack_integer:decode(B1,4),
     {Str, B2} = hpack_string:decode(Rem),
     {Name,_}= hpack_index:lookup(Index, T),
-    decode(B2, Acc ++ [{Name, Str}], Context);
+    decode(B2, Acc ++ [{Name, Str}], Context).
+
 decode_literal_header_never_indexed(<<2#0001:4,2#0000:4,B1/bits>>, Acc,
     Context) ->
     {Str, B2} = hpack_string:decode(B1),
     {Value, B3} = hpack_string:decode(B2),
     decode(B3, Acc ++ [{Str, Value}], Context);
-decode_literal_header_never_indexed(<<2#0001:4,Index:4,B1/bits>>, Acc,
+decode_literal_header_never_indexed(<<2#0001:4,B1/bits>>, Acc,
     Context = #decode_context{dynamic_table=T}) ->
-    {Str, B2} = hpack_string:decode(B1),
+    {Index, Rem} = hpack_integer:decode(B1,4),
+    {Str, B2} = hpack_string:decode(Rem),
     {Name,_}= hpack_index:lookup(Index, T),
     decode(B2, Acc ++ [{Name, Str}], Context).
 
-decode_dynamic_table_size_update(<<2#001:3,2#11111:5,Bin/binary>>, Acc,
+decode_dynamic_table_size_update(<<2#001:3,Bin/bits>>, Acc,
     Context = #decode_context{dynamic_table=T}) ->
     {NewSize, Rem} = hpack_integer:decode(Bin,5),
-    decode(Rem, Acc, Context#decode_context{dynamic_table=hpack_index:resize(NewSize, T)});
-decode_dynamic_table_size_update(<<2#001:3,NewSize:5,Bin/binary>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
-    decode(Bin, Acc, Context#decode_context{dynamic_table=hpack_index:resize(NewSize, T)}).
+    decode(Rem, Acc, Context#decode_context{dynamic_table=hpack_index:resize(NewSize, T)}).
 
 -spec encode([{binary(), binary()}], binary(), encode_context()) -> {binary(), encode_context()}.
 encode([], Acc, Context) ->
