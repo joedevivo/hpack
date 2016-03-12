@@ -4,3 +4,5 @@ rebar3
 _build
 erln8.config
 *.beam
+.rebar3
+ebin
