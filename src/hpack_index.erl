@@ -7,6 +7,7 @@
     lookup/2,
     resize/2,
     table_size/1,
+    max_table_size/1,
     match/2
 ]).
 
@@ -19,7 +20,9 @@
 
 -record(dynamic_table, {
     table = [] :: [{pos_integer(), header_name(), header_value()}],
-    max_size = 4096 :: pos_integer(),
+    %% max_size is the size allowed by the protocol
+    max_size = 4096 :: non_neg_integer(),
+    %% size is how big this thing really is
     size = 0 :: non_neg_integer()
     }).
 -type dynamic_table() :: #dynamic_table{}.
@@ -56,6 +59,25 @@ add(Name, Value, EntrySize, DT=#dynamic_table{size=S, max_size=MS})
 droplast(DT=#dynamic_table{table=T, size=S}) ->
     [Last|NewTR] = lists:reverse(T),
     DT#dynamic_table{size=S-entry_size(Last), table=lists:reverse(NewTR)}.
+
+
+%% TODO: There's a problem here, where if you shink the dynamic table
+%% size, you can never increase it.
+
+%% resize/2 sets the max_table_size, and truncates the table if it
+%% needs to be smaller to fit in that maximum
+-spec resize(pos_integer(), dynamic_table()) -> dynamic_table().
+resize(NewSize, DT=#dynamic_table{size=S})
+    when NewSize >= S ->
+        DT#dynamic_table{max_size=NewSize};
+resize(NewSize, DT) ->
+    resize(NewSize, droplast(DT)).
+
+-spec table_size(dynamic_table()) -> pos_integer().
+table_size(#dynamic_table{size=S}) -> S.
+
+-spec max_table_size(dynamic_table()) -> pos_integer().
+max_table_size(#dynamic_table{max_size=S}) -> S.
 
 -spec lookup(pos_integer(), dynamic_table()) -> header() | undefined.
 lookup(1 , _) -> {<<":authority">>, <<>>};
@@ -126,17 +148,6 @@ lookup(Idx, #dynamic_table{table=T}) ->
         {Idx, Name, V} ->
             {Name, V}
     end.
-
--spec resize(pos_integer(), dynamic_table()) -> dynamic_table().
-resize(NewSize, DT=#dynamic_table{size=S})
-    when NewSize >= S ->
-        DT#dynamic_table{max_size=NewSize};
-resize(NewSize, DT) ->
-    resize(NewSize, droplast(DT)).
-
-
--spec table_size(dynamic_table()) -> pos_integer().
-table_size(#dynamic_table{size=S}) -> S.
 
 -spec match(header(), dynamic_table()) -> {atom(), pos_integer()|undefined}.
 match({<<":authority">>, <<>>}, _) ->                     {indexed, 1 };

@@ -6,12 +6,16 @@ REBAR3 = $(CURDIR)/rebar3
 endif
 
 # Fallback to rebar on PATH
-REBAR3 ?= $(shell test -e `which rebar3` 2>/dev/null && which rebar3 || echo "./rebar3")
+REBAR3 ?= $(shell which rebar3)
 
 # And finally, prep to download rebar if all else fails
 ifeq ($(REBAR3),)
 REBAR3 = $(CURDIR)/rebar3
 endif
+
+clean: $(REBAR3)
+	@$(REBAR3) clean
+	rm -rf _build
 
 all: $(REBAR3)
 	@$(REBAR3) do clean, compile, eunit, ct, dialyzer

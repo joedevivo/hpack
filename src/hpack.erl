@@ -5,24 +5,22 @@
 
 %% API Exports
 -export([
-         new_decode_context/0,
-         new_encode_context/0,
+         new_context/0,
+         new_context/1,
          decode/2,
-         encode/2
+         encode/2,
+         new_max_table_size/2
         ]).
 
 %% Datatypes for the real world:
--record(decode_context, {
-        dynamic_table = hpack_index:new()
-    }).
--type decode_context() :: #decode_context{}.
+-record(hpack_context,
+        {
+          dynamic_table = hpack_index:new(),
+          connection_max_table_size = 4096 :: non_neg_integer()
+        }).
+-type context() :: #hpack_context{}.
 
--record(encode_context, {
-        dynamic_table = hpack_index:new()
-    }).
--type encode_context() :: #encode_context{}.
-
--export_type([decode_context/0,encode_context/0]).
+-export_type([context/0]).
 
 -type header_name() :: binary().
 -type header_value() :: binary().
@@ -36,26 +34,55 @@
               headers/0
              ]).
 
--spec new_encode_context() -> encode_context().
-new_encode_context() -> #encode_context{}.
+-spec new_context() -> context().
+new_context() -> #hpack_context{}.
 
--spec new_decode_context() -> decode_context().
-new_decode_context() -> #decode_context{}.
+-spec new_context(non_neg_integer()) -> context().
+new_context(MaxTableSize) ->
+    #hpack_context{
+       connection_max_table_size=MaxTableSize
+      }.
 
--spec encode([{binary(), binary()}], encode_context()) -> {binary(), encode_context()}.
+-spec new_max_table_size(non_neg_integer(), context())
+                        -> context().
+new_max_table_size(NewSize,
+                   #hpack_context{
+                      dynamic_table=T,
+                      connection_max_table_size=OldSize
+                     }=Context) ->
+    NewT = case OldSize > NewSize of
+               true ->
+                   hpack_index:resize(NewSize, T);
+               _ ->
+                   T
+           end,
+    Context#hpack_context{
+      dynamic_table=NewT,
+      connection_max_table_size=NewSize
+     }.
+
+-spec encode(headers(),
+             context())
+            -> {ok, {binary(), context()}}
+                   | {error, term()}.
 encode(Headers, Context) ->
     encode(Headers, <<>>, Context).
 
--spec decode(binary(), decode_context()) -> {headers(), decode_context()}.
+-spec decode(binary(), context()) ->
+                    {ok, {headers(), context()}}
+                  | {error, compression_error}.
 decode(Bin, Context) ->
     decode(Bin, [], Context).
 
 %% Private Functions
 
--spec decode(binary(), headers(), decode_context()) -> {headers(), decode_context()}.
+-spec decode(binary(), headers(), context())
+            ->
+                    {ok, {headers(), context()}}
+                  | {error, compression_error}.
 %% We're done decoding, return headers
 decode(<<>>, HeadersAcc, C) ->
-    {HeadersAcc, C};
+    {ok, {HeadersAcc, C}};
 %% First bit is '1', so it's an 'Indexed Header Feild'
 %% http://http2.github.io/http2-spec/compression.html#rfc.section.6.1
 decode(<<2#1:1,_/bits>>=B, HeaderAcc, Context) ->
@@ -78,8 +105,6 @@ decode(<<2#0001:4,_/bits>>=B, HeaderAcc, Context) ->
 %% First three bits are '001' so it's a 'Dynamic Table Size Update'
 %% http://http2.github.io/http2-spec/compression.html#rfc.section.6.3
 decode(<<2#001:3,_/bits>>=B, HeaderAcc, Context) ->
-    %% TODO: This will be annoying because it means passing the HTTP setting
-    %% for maximum table size around this entire funtion set
     decode_dynamic_table_size_update(B, HeaderAcc, Context);
 
 %% Oops!
@@ -89,22 +114,22 @@ decode(<<B:1,_/binary>>, _HeaderAcc, _Context) ->
 
 decode_indexed_header(<<2#1:1,B1/bits>>,
                       Acc,
-                      Context = #decode_context{dynamic_table=T}) ->
+                      Context = #hpack_context{dynamic_table=T}) ->
     {Index, B2} = hpack_integer:decode(B1, 7),
     decode(B2, Acc ++ [hpack_index:lookup(Index, T)], Context).
 
 %% The case where the field isn't indexed yet, but should be.
 decode_literal_header_with_indexing(<<2#01:2,2#000000:6,B1/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
+    Context = #hpack_context{dynamic_table=T}) ->
     {Str, B2} = hpack_string:decode(B1),
     {Value, B3} = hpack_string:decode(B2),
     decode(B3,
            Acc ++ [{Str, Value}],
-           Context#decode_context{dynamic_table=hpack_index:add(Str, Value, T)});
+           Context#hpack_context{dynamic_table=hpack_index:add(Str, Value, T)});
 %% This is the case when the index is greater than 0, 0 being not yet
 %% indexed
 decode_literal_header_with_indexing(<<2#01:2,B1/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
+    Context = #hpack_context{dynamic_table=T}) ->
     {Index, Rem} = hpack_integer:decode(B1,6),
     {Str, B2} = hpack_string:decode(Rem),
     {Name,_} = case hpack_index:lookup(Index, T) of
@@ -115,7 +140,7 @@ decode_literal_header_with_indexing(<<2#01:2,B1/bits>>, Acc,
     end,
     decode(B2,
            Acc ++ [{Name, Str}],
-           Context#decode_context{dynamic_table=hpack_index:add(Name, Str, T)}).
+           Context#hpack_context{dynamic_table=hpack_index:add(Name, Str, T)}).
 
 decode_literal_header_without_indexing(<<2#0000:4,2#0000:4,B1/bits>>, Acc,
     Context) ->
@@ -123,7 +148,7 @@ decode_literal_header_without_indexing(<<2#0000:4,2#0000:4,B1/bits>>, Acc,
     {Value, B3} = hpack_string:decode(B2),
     decode(B3, Acc ++ [{Str, Value}], Context);
 decode_literal_header_without_indexing(<<2#0000:4,B1/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
+    Context = #hpack_context{dynamic_table=T}) ->
     {Index, Rem} = hpack_integer:decode(B1,4),
     {Str, B2} = hpack_string:decode(Rem),
     {Name,_}= hpack_index:lookup(Index, T),
@@ -135,30 +160,48 @@ decode_literal_header_never_indexed(<<2#0001:4,2#0000:4,B1/bits>>, Acc,
     {Value, B3} = hpack_string:decode(B2),
     decode(B3, Acc ++ [{Str, Value}], Context);
 decode_literal_header_never_indexed(<<2#0001:4,B1/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
+    Context = #hpack_context{dynamic_table=T}) ->
     {Index, Rem} = hpack_integer:decode(B1,4),
     {Str, B2} = hpack_string:decode(Rem),
     {Name,_}= hpack_index:lookup(Index, T),
     decode(B2, Acc ++ [{Name, Str}], Context).
 
-decode_dynamic_table_size_update(<<2#001:3,Bin/bits>>, Acc,
-    Context = #decode_context{dynamic_table=T}) ->
+decode_dynamic_table_size_update(
+  <<2#001:3,Bin/bits>>, []=Acc,
+  #hpack_context{
+     dynamic_table=T,
+     connection_max_table_size=ConnMaxSize
+    }=Context
+ ) ->
     {NewSize, Rem} = hpack_integer:decode(Bin,5),
-    decode(Rem, Acc, Context#decode_context{dynamic_table=hpack_index:resize(NewSize, T)}).
+    case ConnMaxSize >= NewSize of
+        true ->
+            decode(Rem,
+                   Acc,
+                   Context#hpack_context{
+                     dynamic_table=hpack_index:resize(NewSize, T)
+                    });
+        _ ->
+            {error, compression_error}
+    end.
 
--spec encode([{binary(), binary()}], binary(), encode_context()) -> {binary(), encode_context()}.
+-spec encode(headers(),
+             binary(),
+             context()) ->
+                    {ok, {binary(), context()}}
+                        | {error, term()}.
 encode([], Acc, Context) ->
-    {Acc, Context};
-encode([{HeaderName, HeaderValue}|Tail], B, Context = #encode_context{dynamic_table=T}) ->
+    {ok, {Acc, Context}};
+encode([{HeaderName, HeaderValue}|Tail], B, Context = #hpack_context{dynamic_table=T}) ->
     {BinToAdd, NewContext} = case hpack_index:match({HeaderName, HeaderValue}, T) of
         {indexed, I} ->
             {encode_indexed(I), Context};
         {literal_with_indexing, I} ->
             {encode_literal_indexed(I, HeaderValue),
-             Context#encode_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}};
+             Context#hpack_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}};
         {literal_wo_indexing, _X} ->
             {encode_literal_wo_index(HeaderName, HeaderValue),
-             Context#encode_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}}
+             Context#hpack_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}}
     end,
     NewB = <<B/binary,BinToAdd/binary>>,
     encode(Tail, NewB, NewContext).
