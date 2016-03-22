@@ -270,7 +270,8 @@ no_compression_error_on_two_adjustments_test() ->
 
 %% If a value starts with 01000000, there has to be something after it
 compression_error_on_indexed_fieed_no_value_test() ->
-    Error =
+    {Error, Reason} =
         hpack:decode(<<16#40>>, hpack:new_context()),
     ?assertEqual(error, Error),
+    ?assertEqual(compression_error, Reason),
     ok.

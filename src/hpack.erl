@@ -110,7 +110,7 @@ decode(<<2#001:3,_/bits>>=B, HeaderAcc, Context) ->
 %% Oops!
 decode(<<B:1,_/binary>>, _HeaderAcc, _Context) ->
     lager:debug("Bad header packet ~p", [B]),
-    error.
+    {error, compression_error}.
 
 decode_indexed_header(<<2#1:1,B1/bits>>,
                       Acc,
@@ -120,7 +120,7 @@ decode_indexed_header(<<2#1:1,B1/bits>>,
 
 %% The case where the field isn't indexed yet, but should be.
 decode_literal_header_with_indexing(<<2#01:2,2#000000:6>>, _Acc, _Context) ->
-    error;
+    {error, compression_error};
 decode_literal_header_with_indexing(<<2#01:2,2#000000:6,B1/bits>>, Acc,
                                     #hpack_context{
                                        dynamic_table=T
