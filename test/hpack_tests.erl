@@ -267,3 +267,10 @@ no_compression_error_on_two_adjustments_test() ->
         hpack:decode(<<16#20, 16#3f, 16#e1, 16#1f>>, hpack:new_context()),
     ?assertEqual(ok, Ok),
     ok.
+
+%% If a value starts with 01000000, there has to be something after it
+compression_error_on_indexed_fieed_no_value_test() ->
+    Error =
+        hpack:decode(<<16#40>>, hpack:new_context()),
+    ?assertEqual(error, Error),
+    ok.

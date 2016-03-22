@@ -119,8 +119,13 @@ decode_indexed_header(<<2#1:1,B1/bits>>,
     decode(B2, Acc ++ [hpack_index:lookup(Index, T)], Context).
 
 %% The case where the field isn't indexed yet, but should be.
+decode_literal_header_with_indexing(<<2#01:2,2#000000:6>>, _Acc, _Context) ->
+    error;
 decode_literal_header_with_indexing(<<2#01:2,2#000000:6,B1/bits>>, Acc,
-    Context = #hpack_context{dynamic_table=T}) ->
+                                    #hpack_context{
+                                       dynamic_table=T
+                                      }=Context) ->
+    io:format("B1: ~p~n", [B1]),
     {Str, B2} = hpack_string:decode(B1),
     {Value, B3} = hpack_string:decode(B2),
     decode(B3,
@@ -132,11 +137,13 @@ decode_literal_header_with_indexing(<<2#01:2,B1/bits>>, Acc,
     Context = #hpack_context{dynamic_table=T}) ->
     {Index, Rem} = hpack_integer:decode(B1,6),
     {Str, B2} = hpack_string:decode(Rem),
-    {Name,_} = case hpack_index:lookup(Index, T) of
-        undefined ->
-            lager:error("Tried to find ~p in ~p", [Index, T]),
-            throw(undefined);
-        {N, V} -> {N, V}
+    {Name,_} =
+        case hpack_index:lookup(Index, T) of
+            undefined ->
+                lager:error("Tried to find ~p in ~p", [Index, T]),
+                throw(undefined);
+            {N, V} ->
+                {N, V}
     end,
     decode(B2,
            Acc ++ [{Name, Str}],
