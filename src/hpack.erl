@@ -125,7 +125,6 @@ decode_literal_header_with_indexing(<<2#01:2,2#000000:6,B1/bits>>, Acc,
                                     #hpack_context{
                                        dynamic_table=T
                                       }=Context) ->
-    io:format("B1: ~p~n", [B1]),
     {Str, B2} = hpack_string:decode(B1),
     {Value, B3} = hpack_string:decode(B2),
     decode(B3,
