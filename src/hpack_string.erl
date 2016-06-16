@@ -1,3 +1,5 @@
+%% @private
+
 -module(hpack_string).
 
 -export([

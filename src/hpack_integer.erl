@@ -1,3 +1,5 @@
+%% @private
+
 -module(hpack_integer).
 
 %% @doc For encoding/decoding HPACK's primitive integer representation
