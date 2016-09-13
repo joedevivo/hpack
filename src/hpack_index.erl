@@ -1,3 +1,5 @@
+%% @private
+
 -module(hpack_index).
 
 -export([

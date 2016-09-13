@@ -1,3 +1,5 @@
+%% @private
+
 -module(huffman).
 
 -export([decode/1, encode/1]).
