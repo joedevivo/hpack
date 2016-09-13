@@ -1,7 +1,10 @@
--module(hpack).
+%% @doc
+%% The `hpack' module provides functions for working with HPACK as described in
+%% <a href="https://tools.ietf.org/html/rfc7541">RFC 7541</a>.
 
-%% @doc the hpack module should be the only API access point you need
-%% for the encoding and decoding of header blocks
+%% @reference <a href="https://tools.ietf.org/html/rfc7541">RFC 7541</a>
+
+-module(hpack).
 
 %% API Exports
 -export([
@@ -34,15 +37,23 @@
               headers/0
              ]).
 
+%% @equiv new_context(4096)
 -spec new_context() -> context().
 new_context() -> #hpack_context{}.
 
+%% @doc
+%% Returns a new HPACK context with the given `MaxTableSize' as the max table size.
 -spec new_context(non_neg_integer()) -> context().
 new_context(MaxTableSize) ->
     #hpack_context{
        connection_max_table_size=MaxTableSize
       }.
 
+%% @doc
+%% Updates the max table size of the given HPACK context (`Context') to the given
+%% `NewSize'.
+%%
+%% Useful when HTTP/2 settings are renegotiated.
 -spec new_max_table_size(non_neg_integer(), context())
                         -> context().
 new_max_table_size(NewSize,
@@ -61,6 +72,18 @@ new_max_table_size(NewSize,
       connection_max_table_size=NewSize
      }.
 
+%% @doc
+%% Encodes the given `Headers' using the given `Context'.
+%%
+%% When successful, returns a `{ok, {EncodedHeaders, NewContext}}' tuple where
+%% `EncodedHeaders' is a binary representing the encoded headers and `NewContext'
+%% is the new HPACK context.
+%%
+%% For example:
+%% ```
+%% Headers = [{<<":method">>, <<"GET">>}],
+%% {ok, {EncodedHeaders, NewContext}} = hpack:encode(Headers, hpack:new_context()).
+%% '''
 -spec encode(headers(),
              context())
             -> {ok, {binary(), context()}}
@@ -68,6 +91,17 @@ new_max_table_size(NewSize,
 encode(Headers, Context) ->
     encode(Headers, <<>>, Context).
 
+%% @doc
+%% Decodes the given binary into a list of headers using the given HPACK
+%% context.
+%%
+%% If successful, returns a `{ok, {Headers, NewContext}}' tuple where `Headers'
+%% are the decoded headers and `NewContext' is the new HPACK context.
+%%
+%% For example:
+%% ```
+%% {Headers, NewContext} = hpack:decode(Binary, OldContext).
+%% '''
 -spec decode(binary(), context()) ->
                     {ok, {headers(), context()}}
                   | {error, compression_error}.
