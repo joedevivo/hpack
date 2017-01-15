@@ -104,7 +104,8 @@ encode(Headers, Context) ->
 %% '''
 -spec decode(binary(), context()) ->
                     {ok, {headers(), context()}}
-                  | {error, compression_error}.
+                  | {error, compression_error}
+                  | {error, {compression_error, {bad_header_packet, binary()}}}.
 decode(Bin, Context) ->
     decode(Bin, [], Context).
 
@@ -113,7 +114,8 @@ decode(Bin, Context) ->
 -spec decode(binary(), headers(), context())
             ->
                     {ok, {headers(), context()}}
-                  | {error, compression_error}.
+                  | {error, compression_error}
+                  | {error, {compression_error, {bad_header_packet, binary()}}}.
 %% We're done decoding, return headers
 decode(<<>>, HeadersAcc, C) ->
     {ok, {HeadersAcc, C}};
@@ -143,8 +145,7 @@ decode(<<2#001:3,_/bits>>=B, HeaderAcc, Context) ->
 
 %% Oops!
 decode(<<B:1,_/binary>>, _HeaderAcc, _Context) ->
-    lager:debug("Bad header packet ~p", [B]),
-    {error, compression_error}.
+    {error, {compression_error, {bad_header_packet, B}}}.
 
 decode_indexed_header(<<2#1:1,B1/bits>>,
                       Acc,
@@ -173,7 +174,6 @@ decode_literal_header_with_indexing(<<2#01:2,B1/bits>>, Acc,
     {Name,_} =
         case hpack_index:lookup(Index, T) of
             undefined ->
-                lager:error("Tried to find ~p in ~p", [Index, T]),
                 throw(undefined);
             {N, V} ->
                 {N, V}

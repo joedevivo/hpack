@@ -6,9 +6,12 @@
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib,
-                  lager
+                  stdlib
                  ]},
-  {env, []}
+  {env, []},
+
+  {maintainers, ["Joe Devivo"]},
+  {licenses, ["MIT"]},
+  {links, [{"Github", "https://github.com/joedevivo/hpack"}]}
  ]}.
 %% vim: set filetype=erlang tabstop=2
