@@ -10,7 +10,7 @@
                  ]},
   {env, []},
 
-  {maintainers, ["Joe Devivo"]},
+  {maintainers, ["Joe DeVivo"]},
   {licenses, ["MIT"]},
   {links, [{"Github", "https://github.com/joedevivo/hpack"}]}
  ]}.
