@@ -10,6 +10,7 @@
                  ]},
   {env, []},
 
+  {pkg_name, 'hpack-erl'},
   {maintainers, ["Joe DeVivo"]},
   {licenses, ["MIT"]},
   {links, [{"Github", "https://github.com/joedevivo/hpack"}]}
