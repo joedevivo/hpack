@@ -93,7 +93,7 @@ ClientRequestHeaders = [
     EncodeContext1),
 
 %% Server operation, after receiving RequestHeadersBin
-{ServerRequestHeaders, DecodeContext2} = hpack:decode(
+{ok, {ServerRequestHeaders, DecodeContext2}} = hpack:decode(
     RequestHeadersBin,
     DecodeContext1),
 
