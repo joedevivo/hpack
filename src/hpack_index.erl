@@ -52,12 +52,16 @@ add(Name, Value, EntrySize, DT=#dynamic_table{table=T, size=S, max_size=MS})
     when EntrySize + S =< MS ->
     TPlus = lists:map(fun({N,H,V}) -> {N+1, H,V} end, T),
     DT#dynamic_table{size=S+EntrySize, table=[{?DYNAMIC_TABLE_MIN_INDEX, Name, Value}|TPlus]};
+add(_Name, _Value, EntrySize, DT=#dynamic_table{max_size=MS, table=[]})
+    when EntrySize > MS ->
+    DT;
 add(Name, Value, EntrySize, DT=#dynamic_table{size=S, max_size=MS})
     when EntrySize + S > MS ->
     add(Name, Value, EntrySize,
         droplast(DT)).
 
 -spec droplast(dynamic_table()) -> dynamic_table().
+droplast(DT=#dynamic_table{table=[]}) -> DT;
 droplast(DT=#dynamic_table{table=T, size=S}) ->
     [Last|NewTR] = lists:reverse(T),
     DT#dynamic_table{size=S-entry_size(Last), table=lists:reverse(NewTR)}.
