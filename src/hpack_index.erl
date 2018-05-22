@@ -58,6 +58,7 @@ add(Name, Value, EntrySize, DT=#dynamic_table{size=S, max_size=MS})
         droplast(DT)).
 
 -spec droplast(dynamic_table()) -> dynamic_table().
+droplast(DT=#dynamic_table{table=[]}) -> DT;
 droplast(DT=#dynamic_table{table=T, size=S}) ->
     [Last|NewTR] = lists:reverse(T),
     DT#dynamic_table{size=S-entry_size(Last), table=lists:reverse(NewTR)}.
