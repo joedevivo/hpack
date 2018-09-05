@@ -8,4 +8,7 @@ otp_release:
 
 install: make clean
 
-script: make all
+script:
+- wget -c https://github.com/erlang/rebar3/releases/download/3.6.1/rebar3
+- chmod +x rebar3
+- make all
