@@ -1,270 +1,319 @@
 %% @doc
 %% The `hpack' module provides functions for working with HPACK as described in
 %% <a href="https://tools.ietf.org/html/rfc7541">RFC 7541</a>.
-
+%%
 %% @reference <a href="https://tools.ietf.org/html/rfc7541">RFC 7541</a>
 
 -module(hpack).
 
-%% API Exports
+
 -export([
-         new_context/0,
-         new_context/1,
-         decode/2,
-         encode/2,
-         new_max_table_size/2
-        ]).
+    new/0,
+    new/1,
 
-%% Datatypes for the real world:
--record(hpack_context,
-        {
-          dynamic_table = hpack_index:new(),
-          connection_max_table_size = 4096 :: non_neg_integer()
-        }).
--type context() :: #hpack_context{}.
+    resize/2,
 
--export_type([context/0]).
+    decode/2,
+    encode/2
+]).
 
--type header_name() :: binary().
--type header_value() :: binary().
--type header() :: {header_name(), header_value()}.
--type headers() :: [header()].
+
+-include("hpack.hrl").
+
 
 -export_type([
-              header_name/0,
-              header_value/0,
-              header/0,
-              headers/0
-             ]).
+    context/0,
 
-%% @equiv new_context(4096)
--spec new_context() -> context().
-new_context() -> #hpack_context{}.
+    header_name/0,
+    header_value/0,
+    header_opt/0,
+    header/0,
+    headers/0,
+
+    encode_error/0,
+    decode_error/0
+]).
+
+
+%% @equiv new(4096)
+-spec new() -> context().
+new() ->
+    #hpack_ctx{}.
+
 
 %% @doc
-%% Returns a new HPACK context with the given `MaxTableSize' as the max table size.
--spec new_context(non_neg_integer()) -> context().
-new_context(MaxTableSize) ->
-    #hpack_context{
-       connection_max_table_size=MaxTableSize
-      }.
+%% Returns a new HPACK context with the given `ConnMaxTableSize'
+-spec new(non_neg_integer()) -> context().
+new(ConnMaxTableSize) ->
+    #hpack_ctx{
+        max_size = min(ConnMaxTableSize, 4096),
+        conn_max_size = ConnMaxTableSize
+    }.
+
 
 %% @doc
-%% Updates the max table size of the given HPACK context (`Context') to the given
-%% `NewSize'.
+%% Updates the max table size of the given HPACK
+%% context to the given `NewSize'. `NewSize` must
+%% not exceed the size specified when creating
+%% the context.
+-spec resize(context(), non_neg_integer()) -> context().
+resize(#hpack_ctx{} = Ctx, NewSize) when is_integer(NewSize) ->
+    #hpack_ctx{
+        max_size = OldSize,
+        conn_max_size = ConnMaxSize
+    } = Ctx,
+    if NewSize =< ConnMaxSize -> ok; true ->
+        ?ERROR({invalid_table_size, NewSize})
+    end,
+    case NewSize > OldSize of
+        true -> Ctx#hpack_ctx{max_size = NewSize};
+        false -> hpack_index:resize(Ctx, NewSize)
+    end.
+
+
+%% @doc
+%% Encodes the given `Headers' using the given `Ctx'.
 %%
-%% Useful when HTTP/2 settings are renegotiated.
--spec new_max_table_size(non_neg_integer(), context())
-                        -> context().
-new_max_table_size(NewSize,
-                   #hpack_context{
-                      dynamic_table=T,
-                      connection_max_table_size=OldSize
-                     }=Context) ->
-    NewT = case OldSize > NewSize of
-               true ->
-                   hpack_index:resize(NewSize, T);
-               _ ->
-                   T
-           end,
-    Context#hpack_context{
-      dynamic_table=NewT,
-      connection_max_table_size=NewSize
-     }.
-
-%% @doc
-%% Encodes the given `Headers' using the given `Context'.
-%%
-%% When successful, returns a `{ok, {EncodedHeaders, NewContext}}' tuple where
-%% `EncodedHeaders' is a binary representing the encoded headers and `NewContext'
-%% is the new HPACK context.
+%% When successful, returns a `{ok, NewContext, EncodedHeaders}'
+%% tuple where `EncodedHeaders' is a binary representing the
+%% encoded headers and `NewContext' is the new HPACK context.
 %%
 %% For example:
 %% ```
 %% Headers = [{<<":method">>, <<"GET">>}],
-%% {ok, {EncodedHeaders, NewContext}} = hpack:encode(Headers, hpack:new_context()).
+%% {ok, NewCtx EncodedHeaders} = hpack:encode(hpack:new(), Headers).
 %% '''
--spec encode(headers(),
-             context())
-            -> {ok, {binary(), context()}}
-                   | {error, term()}.
-encode(Headers, Context) ->
-    encode(Headers, <<>>, Context).
+-spec encode(context(), headers()) ->
+        {ok, context(), binary()} |
+        {error, encode_error()}.
+encode(#hpack_ctx{} = Ctx, Headers) when is_list(Headers) ->
+    try
+        encode(Ctx, Headers, [])
+    catch throw:{hpack_error, Error} ->
+        {error, Error}
+    end.
+
 
 %% @doc
-%% Decodes the given binary into a list of headers using the given HPACK
-%% context.
+%% Decodes the provided binary `Bin` using the HPACK
+%% context `Ctx`.
 %%
-%% If successful, returns a `{ok, {Headers, NewContext}}' tuple where `Headers'
-%% are the decoded headers and `NewContext' is the new HPACK context.
+%% If successful, returns `{ok, NewCtx, Headers}'
 %%
 %% For example:
 %% ```
-%% {Headers, NewContext} = hpack:decode(Binary, OldContext).
+%% {ok, NewCtx, Headers} = hpack:decode(OldCtx, Binary)
 %% '''
--spec decode(binary(), context()) ->
-                    {ok, {headers(), context()}}
-                  | {error, compression_error}
-                  | {error, {compression_error, {bad_header_packet, binary()}}}.
-decode(Bin, Context) ->
-    decode(Bin, [], Context).
-
-%% Private Functions
-
--spec decode(binary(), headers(), context())
-            ->
-                    {ok, {headers(), context()}}
-                  | {error, compression_error}
-                  | {error, {compression_error, {bad_header_packet, binary()}}}.
-%% We're done decoding, return headers
-decode(<<>>, HeadersAcc, C) ->
-    {ok, {HeadersAcc, C}};
-%% First bit is '1', so it's an 'Indexed Header Feild'
-%% http://http2.github.io/http2-spec/compression.html#rfc.section.6.1
-decode(<<2#1:1,_/bits>>=B, HeaderAcc, Context) ->
-    decode_indexed_header(B, HeaderAcc, Context);
-%% First two bits are '01' so it's a 'Literal Header Field with Incremental Indexing'
-%% http://http2.github.io/http2-spec/compression.html#rfc.section.6.2.1
-decode(<<2#01:2,_/bits>>=B, HeaderAcc, Context) ->
-    decode_literal_header_with_indexing(B, HeaderAcc, Context);
-
-%% First four bits are '0000' so it's a 'Literal Header Field without Indexing'
-%% http://http2.github.io/http2-spec/compression.html#rfc.section.6.2.2
-decode(<<2#0000:4,_/bits>>=B, HeaderAcc, Context) ->
-    decode_literal_header_without_indexing(B, HeaderAcc, Context);
-
-%% First four bits are '0001' so it's a 'Literal Header Field never Indexed'
-%% http://http2.github.io/http2-spec/compression.html#rfc.section.6.2.3
-decode(<<2#0001:4,_/bits>>=B, HeaderAcc, Context) ->
-    decode_literal_header_never_indexed(B, HeaderAcc, Context);
-
-%% First three bits are '001' so it's a 'Dynamic Table Size Update'
-%% http://http2.github.io/http2-spec/compression.html#rfc.section.6.3
-decode(<<2#001:3,_/bits>>=B, HeaderAcc, Context) ->
-    decode_dynamic_table_size_update(B, HeaderAcc, Context);
-
-%% Oops!
-decode(<<B:1,_/binary>>, _HeaderAcc, _Context) ->
-    {error, {compression_error, {bad_header_packet, B}}}.
-
-decode_indexed_header(<<2#1:1,B1/bits>>,
-                      Acc,
-                      Context = #hpack_context{dynamic_table=T}) ->
-    {Index, B2} = hpack_integer:decode(B1, 7),
-    decode(B2, Acc ++ [hpack_index:lookup(Index, T)], Context).
-
-%% The case where the field isn't indexed yet, but should be.
-decode_literal_header_with_indexing(<<2#01:2,2#000000:6>>, _Acc, _Context) ->
-    {error, compression_error};
-decode_literal_header_with_indexing(<<2#01:2,2#000000:6,B1/bits>>, Acc,
-                                    #hpack_context{
-                                       dynamic_table=T
-                                      }=Context) ->
-    {Str, B2} = hpack_string:decode(B1),
-    {Value, B3} = hpack_string:decode(B2),
-    decode(B3,
-           Acc ++ [{Str, Value}],
-           Context#hpack_context{dynamic_table=hpack_index:add(Str, Value, T)});
-%% This is the case when the index is greater than 0, 0 being not yet
-%% indexed
-decode_literal_header_with_indexing(<<2#01:2,B1/bits>>, Acc,
-    Context = #hpack_context{dynamic_table=T}) ->
-    {Index, Rem} = hpack_integer:decode(B1,6),
-    {Str, B2} = hpack_string:decode(Rem),
-    {Name,_} =
-        case hpack_index:lookup(Index, T) of
-            undefined ->
-                throw(undefined);
-            {N, V} ->
-                {N, V}
-    end,
-    decode(B2,
-           Acc ++ [{Name, Str}],
-           Context#hpack_context{dynamic_table=hpack_index:add(Name, Str, T)}).
-
-decode_literal_header_without_indexing(<<2#0000:4,2#0000:4,B1/bits>>, Acc,
-    Context) ->
-    {Str, B2} = hpack_string:decode(B1),
-    {Value, B3} = hpack_string:decode(B2),
-    decode(B3, Acc ++ [{Str, Value}], Context);
-decode_literal_header_without_indexing(<<2#0000:4,B1/bits>>, Acc,
-    Context = #hpack_context{dynamic_table=T}) ->
-    {Index, Rem} = hpack_integer:decode(B1,4),
-    {Str, B2} = hpack_string:decode(Rem),
-    {Name,_}= hpack_index:lookup(Index, T),
-    decode(B2, Acc ++ [{Name, Str}], Context).
-
-decode_literal_header_never_indexed(<<2#0001:4,2#0000:4,B1/bits>>, Acc,
-    Context) ->
-    {Str, B2} = hpack_string:decode(B1),
-    {Value, B3} = hpack_string:decode(B2),
-    decode(B3, Acc ++ [{Str, Value}], Context);
-decode_literal_header_never_indexed(<<2#0001:4,B1/bits>>, Acc,
-    Context = #hpack_context{dynamic_table=T}) ->
-    {Index, Rem} = hpack_integer:decode(B1,4),
-    {Str, B2} = hpack_string:decode(Rem),
-    {Name,_}= hpack_index:lookup(Index, T),
-    decode(B2, Acc ++ [{Name, Str}], Context).
-
-decode_dynamic_table_size_update(
-  <<2#001:3,Bin/bits>>, []=Acc,
-  #hpack_context{
-     dynamic_table=T,
-     connection_max_table_size=ConnMaxSize
-    }=Context
- ) ->
-    {NewSize, Rem} = hpack_integer:decode(Bin,5),
-    case ConnMaxSize >= NewSize of
-        true ->
-            decode(Rem,
-                   Acc,
-                   Context#hpack_context{
-                     dynamic_table=hpack_index:resize(NewSize, T)
-                    });
-        _ ->
-            {error, compression_error}
+-spec decode(context(), binary()) ->
+        {ok, {headers(), context()}} |
+        {error, decode_error()}.
+decode(#hpack_ctx{} = Ctx, Bin) when is_binary(Bin) ->
+    try
+        decode(Ctx, Bin, [])
+    catch throw:{hpack_error, Error} ->
+        {error, Error}
     end.
 
--spec encode(headers(),
-             binary(),
-             context()) ->
-                    {ok, {binary(), context()}}
-                        | {error, term()}.
-encode([], Acc, Context) ->
-    {ok, {Acc, Context}};
-encode([{HeaderName, HeaderValue}|Tail], B, Context = #hpack_context{dynamic_table=T}) ->
-    {BinToAdd, NewContext} = case hpack_index:match({HeaderName, HeaderValue}, T) of
-        {indexed, I} ->
-            {encode_indexed(I), Context};
-        {literal_with_indexing, I} ->
-            {encode_literal_indexed(I, HeaderValue),
-             Context#hpack_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}};
-        {literal_wo_indexing, _X} ->
-            {encode_literal_wo_index(HeaderName, HeaderValue),
-             Context#hpack_context{dynamic_table=hpack_index:add(HeaderName, HeaderValue, T)}}
+
+encode(Ctx, [], Acc) ->
+    {ok, Ctx, iolist_to_binary(lists:reverse(Acc))};
+
+encode(Ctx, [{Name, Value} | Tail], Acc) ->
+    encode(Ctx, [{Name, Value, []} | Tail], Acc);
+
+encode(Ctx, [{Name, Value, Opts} | Tail], Acc)
+        when is_binary(Name), is_binary(Value), is_list(Opts) ->
+    NeverIndex = lists:member(never_index, Opts),
+    NoIndex = lists:member(no_index, Opts),
+    NoNameIndex = lists:member(no_name_index, Opts),
+
+    {NewCtx, Encoded} = if
+        NeverIndex and NoNameIndex ->
+            {Ctx, encode_never_index(Name, Value, Opts)};
+        NeverIndex ->
+            {Ctx, encode_never_index(name_index(Ctx, Name), Value, Opts)};
+        NoIndex and NoNameIndex ->
+            {Ctx, encode_no_index(Name, Value, Opts)};
+        NoIndex ->
+            {Ctx, encode_no_index(name_index(Ctx, Name), Value, Opts)};
+        true ->
+            case hpack_index:match(Ctx, {Name, Value}) of
+                {hdr_indexed, Idx} ->
+                    {Ctx, encode_indexed(Idx)};
+                {name_indexed, Idx} ->
+                    {
+                        hpack_index:add(Ctx, Name, Value),
+                        encode_indexed(Idx, Value, Opts)
+                    };
+                not_indexed ->
+                    {
+                        hpack_index:add(Ctx, Name, Value),
+                        encode_indexed(Name, Value, Opts)
+                    }
+            end
     end,
-    NewB = <<B/binary,BinToAdd/binary>>,
-    encode(Tail, NewB, NewContext).
 
-encode_indexed(I) when I < 63 ->
-    <<2#1:1,I:7>>;
-encode_indexed(I) ->
-    Encoded = hpack_integer:encode(I, 7),
-    <<2#1:1, Encoded/bits>>.
+    encode(NewCtx, Tail, [Encoded | Acc]);
 
-encode_literal_indexed(I, Value) when I < 63 ->
-    BinToAdd = encode_literal(Value),
-    <<2#01:2,I:6,BinToAdd/binary>>;
-encode_literal_indexed(I, Value) ->
-    Index = hpack_integer:encode(I, 6),
-    BinToAdd = encode_literal(Value),
-    <<2#01:2,Index/bits,BinToAdd/binary>>.
+encode(_Ctx, [InvalidHeader | _], _Acc) ->
+    ?ERROR({invalid_header, InvalidHeader}).
 
-encode_literal(Value) ->
-    L = hpack_integer:encode(size(Value),7),
-    <<2#0:1,L/bits,Value/binary>>.
 
-encode_literal_wo_index(Name, Value) ->
-    EncName = encode_literal(Name),
-    EncValue = encode_literal(Value),
-    <<2#01000000,EncName/binary,EncValue/binary>>.
+encode_never_index(Idx, Value, Opts) when is_integer(Idx) ->
+    Prefix = <<2#0001:4>>,
+    IdxBin = hpack_integer:encode(Idx, 4),
+    ValueBin = hpack_string:encode(Value, Opts),
+    <<Prefix/bits, IdxBin/bits, ValueBin/bits>>;
+
+encode_never_index(Name, Value, Opts) when is_binary(Name) ->
+    Prefix = <<2#0001:4, 0:4>>,
+    NameBin = hpack_string:encode(Name, Opts),
+    ValueBin = hpack_string:encode(Value, Opts),
+    <<Prefix/bits, NameBin/bits, ValueBin/bits>>.
+
+
+encode_no_index(Idx, Value, Opts) when is_integer(Idx) ->
+    Prefix = <<2#0000:4>>,
+    IdxBin = hpack_integer:encode(Idx, 4),
+    ValueBin = hpack_string:encode(Value, Opts),
+    <<Prefix/bits, IdxBin/bits, ValueBin/bits>>;
+
+encode_no_index(Name, Value, Opts) when is_binary(Name) ->
+    Prefix = <<2#0000:4, 0:4>>,
+    NameBin = hpack_string:encode(Name, Opts),
+    ValueBin = hpack_string:encode(Value, Opts),
+    <<Prefix/bits, NameBin/bits, ValueBin/bits>>.
+
+
+encode_indexed(Idx) ->
+    IdxBin = hpack_integer:encode(Idx, 7),
+    <<2#1:1, IdxBin/bits>>.
+
+
+encode_indexed(Idx, Value, Opts) when is_integer(Idx) ->
+    Prefix = <<2#01:2>>,
+    IdxBin = hpack_integer:encode(Idx, 6),
+    ValueBin = hpack_string:encode(Value, Opts),
+    <<Prefix/bits, IdxBin/bits, ValueBin/bits>>;
+
+encode_indexed(Name, Value, Opts) when is_binary(Name) ->
+    Prefix = <<2#01:2, 2#000000:6>>,
+    NameBin = hpack_string:encode(Name, Opts),
+    ValueBin = hpack_string:encode(Value, Opts),
+    <<Prefix/bits, NameBin/bits, ValueBin/bits>>.
+
+
+name_index(Ctx, Name) when is_binary(Name) ->
+    case hpack_index:match(Ctx, {Name, undefined}) of
+        {_, Idx} when is_integer(Idx) -> Idx;
+        not_indexed -> Name
+    end.
+
+
+decode(Ctx, <<>>, Acc) ->
+    {ok, Ctx, lists:reverse(Acc)};
+
+decode(Ctx, <<2#1:1, _/bits>> = Bin, Acc) ->
+    decode_indexed(Ctx, Bin, Acc);
+
+decode(Ctx, <<2#01:2, _/bits>> = Bin, Acc) ->
+    decode_and_index(Ctx, Bin, Acc);
+
+decode(Ctx, <<2#0000:4, _/bits>> = Bin, Acc) ->
+    decode_no_index(Ctx, Bin, Acc);
+
+decode(Ctx, <<2#0001:4, _/bits>> = Bin, Acc) ->
+    decode_never_index(Ctx, Bin, Acc);
+
+decode(Ctx, <<2#001:3, _/bits>> = Bin, Acc) ->
+    decode_size_update(Ctx, Bin, Acc).
+
+
+decode_indexed(_Ctx, <<2#1:1, 2#0000000:7, _/binary>>, _Acc) ->
+    ?ERROR({invalid_index, 0});
+
+decode_indexed(Ctx, <<2#1:1, B1/bits>>, Acc) ->
+    {Idx, B2} = hpack_integer:decode(B1, 7),
+    Header = case hpack_index:lookup(Ctx, Idx) of
+        {N, V} -> {N, V, []};
+        undefined -> ?ERROR({unknown_index, Idx})
+    end,
+    decode(Ctx, B2, [Header | Acc]).
+
+
+decode_and_index(Ctx, <<2#01:2, 2#000000:6, B1/bits>>, Acc) ->
+    {Name, B2} = hpack_string:decode(B1),
+    {Value, B3} = hpack_string:decode(B2),
+    Header = case hpack_string:any_uncompressed([B1, B2]) of
+        true -> {Name, Value, [uncompressed]};
+        false -> {Name, Value, []}
+    end,
+    decode(hpack_index:add(Ctx, Name, Value), B3, [Header | Acc]);
+
+decode_and_index(Ctx, <<2#01:2, B1/bits>>, Acc) ->
+    {Idx, B2} = hpack_integer:decode(B1, 6),
+    Name = case hpack_index:lookup(Ctx, Idx) of
+        {N, _} -> N;
+        undefined -> ?ERROR({unknown_index, Idx})
+    end,
+    {Value, B3} = hpack_string:decode(B2),
+    Header = case hpack_string:is_uncompressed(B2) of
+        true -> {Name, Value, [uncompressed]};
+        false -> {Name, Value, []}
+    end,
+    decode(hpack_index:add(Ctx, Name, Value), B3, [Header | Acc]).
+
+
+decode_no_index(Ctx, <<2#0000:4, 2#0000:4, B1/bits>>, Acc) ->
+    {Name, B2} = hpack_string:decode(B1),
+    {Value, B3} = hpack_string:decode(B2),
+    Header = case hpack_string:any_uncompressed([B1, B2]) of
+        true -> {Name, Value, [uncompressed, no_index, no_name_index]};
+        false -> {Name, Value, [no_index, no_name_index]}
+    end,
+    decode(Ctx, B3, [Header | Acc]);
+
+decode_no_index(Ctx, <<2#0000:4, B1/bits>>, Acc) ->
+    {Idx, B2} = hpack_integer:decode(B1, 4),
+    Name = case hpack_index:lookup(Ctx, Idx) of
+        {N, _} -> N;
+        undefined -> ?ERROR({unknown_index, Idx})
+    end,
+    {Value, B3} = hpack_string:decode(B2),
+    Header = case hpack_string:is_uncompressed(B2) of
+        true -> {Name, Value, [uncompressed, no_index]};
+        false -> {Name, Value, [no_index]}
+    end,
+    decode(Ctx, B3, [Header | Acc]).
+
+
+decode_never_index(Ctx, <<2#0001:4, 2#0000:4, B1/bits>>, Acc) ->
+    {Name, B2} = hpack_string:decode(B1),
+    {Value, B3} = hpack_string:decode(B2),
+    Header = case hpack_string:any_uncompressed([B1, B2]) of
+        true -> {Name, Value, [uncompressed, never_index, no_name_index]};
+        false -> {Name, Value, [never_index, no_name_index]}
+    end,
+    decode(Ctx, B3, [Header | Acc]);
+
+decode_never_index(Ctx, <<2#0001:4, B1/bits>>, Acc) ->
+    {Idx, B2} = hpack_integer:decode(B1, 4),
+    Name = case hpack_index:lookup(Ctx, Idx) of
+        {N, _} -> N;
+        undefined -> ?ERROR({unknown_index, Idx})
+    end,
+    {Value, B3} = hpack_string:decode(B2),
+    Header = case hpack_string:is_uncompressed(B2) of
+        true -> {Name, Value, [uncompressed, never_index]};
+        false -> {Name, Value, [never_index]}
+    end,
+    decode(Ctx, B3, [Header | Acc]).
+
+
+% TODO: Test whether resize has to precede all headers
+decode_size_update(Ctx, <<2#001:3, B1/bits>>, []) ->
+    {NewSize, B2} = hpack_integer:decode(B1, 5),
+    decode(resize(Ctx, NewSize), B2, []);
+
+decode_size_update(_Ctx, _Bin, Acc) when length(Acc) > 0 ->
+    ?ERROR({invalid_size_update, headers_received}).
