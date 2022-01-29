@@ -76,7 +76,7 @@ prefix_plus(Prefix, {I, Rem}) ->
     {Prefix+I, Rem}.
 
 -spec encode(non_neg_integer(), pos_integer()) -> binary().
-%% First clauses are peformance optimizations for Int == 2^Prefix - 1
+%% First clauses are performance optimizations for Int == 2^Prefix - 1
 encode(  1,1) -> <<  1:1,0:8>>;
 encode(  3,2) -> <<  3:2,0:8>>;
 encode(  7,3) -> <<  7:3,0:8>>;
