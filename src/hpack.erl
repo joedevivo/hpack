@@ -270,12 +270,13 @@ encode_literal_wo_index(Name, Value) ->
     EncValue = encode_literal(Value),
     <<2#01000000,EncName/binary,EncValue/binary>>.
 
-all_fields_indexed([], _) ->
-    true;
-all_fields_indexed([{HeaderName, HeaderValue}|Tail], Context = #hpack_context{dynamic_table=T}) ->
-    case hpack_index:match({HeaderName, HeaderValue}, T) of
-        {indexed, _} ->
-            all_fields_indexed(Tail, Context);
-        _ ->
-            false
-    end.
+all_fields_indexed(Headers, #hpack_context{dynamic_table=T}) ->
+    lists:all(fun(Header) ->
+                      case hpack_index:match(Header, T) of
+                          {indexed, _} ->
+                              true;
+                          _ ->
+                              false
+                      end
+              end, Headers).
+ 
