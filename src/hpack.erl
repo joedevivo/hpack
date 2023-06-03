@@ -12,7 +12,8 @@
          new_context/1,
          decode/2,
          encode/2,
-         new_max_table_size/2
+         new_max_table_size/2,
+         all_fields_indexed/2
         ]).
 
 %% Datatypes for the real world:
@@ -268,3 +269,14 @@ encode_literal_wo_index(Name, Value) ->
     EncName = encode_literal(Name),
     EncValue = encode_literal(Value),
     <<2#01000000,EncName/binary,EncValue/binary>>.
+
+all_fields_indexed(Headers, #hpack_context{dynamic_table=T}) ->
+    lists:all(fun(Header) ->
+                      case hpack_index:match(Header, T) of
+                          {indexed, _} ->
+                              true;
+                          _ ->
+                              false
+                      end
+              end, Headers).
+ 
